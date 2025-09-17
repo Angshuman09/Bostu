@@ -41,19 +41,23 @@ export const SignupController = async (req, res)=>{
      const isexist = await User.findOne({email});
  
      if(isexist) return res.status(400).json({error:"User already exist"});
+
+     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  
+     if(!emailRegex.test(email)) return res.status(400).json({error:"Not a valid email"});
+
      const newUser = await User.create({
          name, email, password
      })
 
-     const {accessToken, refreshToken} = generateAccessAndRefreshToken(user._id);
+     const {accessToken, refreshToken} = generateAccessAndRefreshToken(newUser._id);
      await storeRefreshToken(newUser._id, refreshToken);
 
      setCookies(res, accessToken, refreshToken);
 
      res.status(200).json({
          user:{
-        id: newUser._id,
+        _id: newUser._id,
         email: newUser.email,
         name: newUser.name,
         role:newUser.role
@@ -96,7 +100,7 @@ export const LoginController =async (req, res)=>{
 
 export const LogoutController =async (req, res)=>{
     try {
-        const refreshToken = res.cookies.refreshToken;
+        const refreshToken = req.cookies.refreshToken;
         if(refreshToken){
             const decoded = jwt.verify(refreshToken, process.env.REFRESHTOKEN_SECRET_KEY);
             await redis.del(`refresh_token:${decoded.userId}`);
@@ -112,9 +116,42 @@ export const LogoutController =async (req, res)=>{
 }
 
 export const refreshToken = async (req, res)=>{
-    
+    try {
+        const refreshToken = req.cookies.refreshToken;
+        if(!refreshToken) return res.status(404).json({error: "refresh token not found"});
+
+        const decoded = jwt.verify(refreshToken, process.env.REFRESHTOKEN_SECRET_KEY);
+
+        const storedToken = await redis.get(`refresh_token:${decoded.userId}`);
+
+        if(storedToken != refreshToken){
+            return res.status(401).json({error: "Invalid refresh token"});
+        }
+
+        const accessToken = jwt.sign({userId:decoded.userId}, process.env.ACCESSTOKEN_SECRET_KEY,{
+           expiresIn: '15m'
+        })
+
+        res.cookie('accessToken', accessToken,{
+            httpOnly: true,
+            secure: process.env.NODE_ENV==='production',
+            sameSite: 'strict',
+            maxAge: 15*60*1000
+        })
+
+        res.json({message: "token refresh successfully"});
+
+    } catch (error) {
+    console.log(`server error occur in refresh token controller: ${error}`);
+    res.status(500).json({error:`server error occur in refresh token controller: ${error}` })
+    }
 }
 
 export const getProfile = async (req, res)=>{
-    
+    try {
+        res.json(req.user);
+    } catch (error) {
+        console.log(`server error occur in get profile controller: ${error}`);
+        res.status(500).json({error:`server error occur in get profile controller: ${error}` })
+    }
 }
